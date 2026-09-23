@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+:root {
+  --background: #07110d;
+  --foreground: #edf8f1;
+  --muted: #91a89a;
+  --panel: rgba(13, 30, 22, 0.86);
+  --line: rgba(151, 255, 190, 0.12);
+  --green: #63e68c;
+  --green-strong: #25c766;
+  --amber: #f0c25d;
+  --red: #ff7f7f;
+  --blue: #70b9ff;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--background); }
+body {
+  margin: 0;
+  color: var(--foreground);
+  background:
+    radial-gradient(circle at 12% -10%, rgba(56, 189, 108, .20), transparent 32rem),
+    radial-gradient(circle at 92% 5%, rgba(55, 120, 255, .09), transparent 28rem),
+    linear-gradient(180deg, #091710 0%, #06100c 100%);
+  min-height: 100vh;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+button, input { font: inherit; }
+button { -webkit-tap-highlight-color: transparent; }
+
+.glass {
+  background: linear-gradient(180deg, rgba(16, 37, 27, .92), rgba(9, 24, 17, .90));
+  border: 1px solid var(--line);
+  box-shadow: 0 16px 50px rgba(0, 0, 0, .24);
+  backdrop-filter: blur(14px);
+}
+
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(122, 255, 168, .025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(122, 255, 168, .025) 1px, transparent 1px);
+  background-size: 34px 34px;
+}
+
+.pulse-dot { box-shadow: 0 0 0 rgba(99, 230, 140, .5); animation: pulse 2s infinite; }
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(99, 230, 140, .45); }
+  70% { box-shadow: 0 0 0 10px rgba(99, 230, 140, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(99, 230, 140, 0); }
+}

@@ -1,0 +1,26 @@
+{
+  "devices": {
+    "AGRO-001": {
+      "telemetry": {
+        "temperature": 28.4,
+        "humidity": 65,
+        "soil": 42,
+        "waterLevel": 76,
+        "led1": false,
+        "led2": false,
+        "led3": false,
+        "led4": false,
+        "updatedAt": 0
+      },
+      "commands": {
+        "led2": false,
+        "led3": false,
+        "led4": false
+      },
+      "status": {
+        "online": false,
+        "lastSeen": 0
+      }
+    }
+  }
+}
