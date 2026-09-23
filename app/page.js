@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { connect as mqttConnect } from "mqtt";
+import mqtt from "mqtt";
 
 import {
   Droplets,
@@ -56,27 +56,10 @@ function formatAge(timestamp) {
 
 export default function Dashboard() {
   // =========================================================
-  // MQTT REFERENCES
+  // REFERENCES
   // =========================================================
 
   const mqttClientRef = useRef(null);
-
-  /*
-   * commandId -> {
-   *   startedAt,
-   *   key
-   * }
-   *
-   * Used for actual:
-   *
-   * Browser
-   *   -> Broker
-   *   -> ESP32
-   *   -> ACK
-   *   -> Browser
-   *
-   * round-trip measurement.
-   */
 
   const pendingCommandsRef = useRef(new Map());
 
@@ -133,15 +116,8 @@ export default function Dashboard() {
 
     let client = null;
 
-    // -------------------------------------------------------
-    // Unique browser client ID
-    //
-    // IMPORTANT:
-    // ESP32 uses:
-    // AGRO_CONNECT
-    //
-    // Browser must NEVER use same Client ID.
-    // -------------------------------------------------------
+    // Browser client ID must be different
+    // from ESP32 client ID.
 
     const browserClientId =
       "AGRO_CONNECT_WEB_" + Math.random().toString(16).slice(2, 10);
@@ -152,10 +128,10 @@ export default function Dashboard() {
 
     try {
       // =====================================================
-      // CREATE MQTT CLIENT
+      // CONNECT
       // =====================================================
 
-      client = mqttConnect(MQTT_WS_URL, {
+      client = mqtt.connect(MQTT_WS_URL, {
         clientId: browserClientId,
 
         clean: true,
@@ -174,7 +150,7 @@ export default function Dashboard() {
       mqttClientRef.current = client;
 
       // =====================================================
-      // MQTT CONNECTED
+      // CONNECTED
       // =====================================================
 
       client.on("connect", () => {
@@ -189,8 +165,7 @@ export default function Dashboard() {
         setError("");
 
         // -----------------------------------------------
-        // TELEMETRY
-        // ESP32 -> Dashboard
+        // Subscribe TELEMETRY
         // -----------------------------------------------
 
         client.subscribe(
@@ -200,7 +175,7 @@ export default function Dashboard() {
           },
           (err) => {
             if (err) {
-              console.error("[MQTT] Telemetry subscribe error:", err);
+              console.error("[MQTT] Telemetry subscription error:", err);
             } else {
               console.log("[MQTT] Subscribed:", MQTT_TOPICS.telemetry);
             }
@@ -208,8 +183,7 @@ export default function Dashboard() {
         );
 
         // -----------------------------------------------
-        // OUTPUT STATE / ACK
-        // ESP32 -> Dashboard
+        // Subscribe STATE / ACK
         // -----------------------------------------------
 
         client.subscribe(
@@ -218,15 +192,16 @@ export default function Dashboard() {
             qos: 1,
           },
           (err) => {
-            if (!err) {
+            if (err) {
+              console.error("[MQTT] State subscription error:", err);
+            } else {
               console.log("[MQTT] Subscribed:", MQTT_TOPICS.state);
             }
           },
         );
 
         // -----------------------------------------------
-        // ONLINE/OFFLINE
-        // ESP32 -> Dashboard
+        // Subscribe DEVICE STATUS
         // -----------------------------------------------
 
         client.subscribe(
@@ -235,17 +210,16 @@ export default function Dashboard() {
             qos: 1,
           },
           (err) => {
-            if (!err) {
+            if (err) {
+              console.error("[MQTT] Status subscription error:", err);
+            } else {
               console.log("[MQTT] Subscribed:", MQTT_TOPICS.status);
             }
           },
         );
 
         // -----------------------------------------------
-        // DESIRED STATE
-        //
-        // Useful if multiple browsers are open.
-        // Also receives retained state.
+        // Subscribe DESIRED STATE
         // -----------------------------------------------
 
         client.subscribe(
@@ -254,7 +228,9 @@ export default function Dashboard() {
             qos: 1,
           },
           (err) => {
-            if (!err) {
+            if (err) {
+              console.error("[MQTT] Desired subscription error:", err);
+            } else {
               console.log("[MQTT] Subscribed:", MQTT_TOPICS.desired);
             }
           },
@@ -262,7 +238,7 @@ export default function Dashboard() {
       });
 
       // =====================================================
-      // MQTT RECONNECTING
+      // RECONNECTING
       // =====================================================
 
       client.on("reconnect", () => {
@@ -276,7 +252,7 @@ export default function Dashboard() {
       });
 
       // =====================================================
-      // MQTT OFFLINE
+      // OFFLINE
       // =====================================================
 
       client.on("offline", () => {
@@ -284,13 +260,13 @@ export default function Dashboard() {
           return;
         }
 
-        console.log("[MQTT] Browser MQTT offline");
+        console.log("[MQTT] Browser client offline");
 
         setMqttConnected(false);
       });
 
       // =====================================================
-      // MQTT CLOSE
+      // CLOSE
       // =====================================================
 
       client.on("close", () => {
@@ -304,7 +280,7 @@ export default function Dashboard() {
       });
 
       // =====================================================
-      // MQTT ERROR
+      // ERROR
       // =====================================================
 
       client.on("error", (err) => {
@@ -318,7 +294,7 @@ export default function Dashboard() {
       });
 
       // =====================================================
-      // MQTT MESSAGE HANDLER
+      // MQTT MESSAGE
       // =====================================================
 
       client.on("message", (topic, payload) => {
@@ -345,9 +321,7 @@ export default function Dashboard() {
 
           const packet = {
             ...initialTelemetry,
-
             ...data,
-
             receivedAt,
           };
 
@@ -363,7 +337,6 @@ export default function Dashboard() {
           setHistory((previous) => {
             const next = [...previous, packet];
 
-            // Keep last 60 sensor packets
             if (next.length > 60) {
               return next.slice(-60);
             }
@@ -375,7 +348,7 @@ export default function Dashboard() {
         }
 
         // =================================================
-        // OUTPUT STATE / COMMAND ACK
+        // OUTPUT STATE + ACK
         // =================================================
 
         if (topic === MQTT_TOPICS.state) {
@@ -397,9 +370,9 @@ export default function Dashboard() {
             const pending = pendingCommandsRef.current.get(commandId);
 
             if (pending) {
-              const rtt = performance.now() - pending.startedAt;
+              const roundTrip = performance.now() - pending.startedAt;
 
-              const rounded = Math.round(rtt);
+              const rounded = Math.round(roundTrip);
 
               console.log("[MQTT RTT]", rounded, "ms");
 
@@ -407,9 +380,9 @@ export default function Dashboard() {
 
               setLastCommandId(commandId);
 
-              setWriting(null);
-
               pendingCommandsRef.current.delete(commandId);
+
+              setWriting(null);
             }
           }
 
@@ -417,7 +390,7 @@ export default function Dashboard() {
         }
 
         // =================================================
-        // DESIRED OUTPUT STATE
+        // DESIRED STATE
         // =================================================
 
         if (topic === MQTT_TOPICS.desired) {
@@ -433,15 +406,15 @@ export default function Dashboard() {
         }
 
         // =================================================
-        // DEVICE ONLINE / OFFLINE
+        // DEVICE STATUS
         // =================================================
 
         if (topic === MQTT_TOPICS.status) {
-          const isOnline = Boolean(data.online);
+          const online = Boolean(data.online);
 
-          setDeviceOnline(isOnline);
+          setDeviceOnline(online);
 
-          console.log("[MQTT DEVICE STATUS]", isOnline ? "ONLINE" : "OFFLINE");
+          console.log("[MQTT DEVICE]", online ? "ONLINE" : "OFFLINE");
         }
       });
     } catch (err) {
@@ -457,7 +430,9 @@ export default function Dashboard() {
     return () => {
       disposed = true;
 
-      console.log("[MQTT] Cleaning up client");
+      console.log("[MQTT] Cleanup");
+
+      pendingCommandsRef.current.clear();
 
       if (client) {
         try {
@@ -465,34 +440,25 @@ export default function Dashboard() {
 
           client.end(true);
         } catch (err) {
-          console.warn("[MQTT CLEANUP]", err);
+          console.warn("[MQTT CLEANUP ERROR]", err);
         }
       }
 
       if (mqttClientRef.current === client) {
         mqttClientRef.current = null;
       }
-
-      pendingCommandsRef.current.clear();
     };
   }, []);
 
   // =========================================================
-  // DEVICE ONLINE CALCULATION
+  // ONLINE STATUS
   // =========================================================
-
-  /*
-   * ESP32 publishes telemetry every ~500ms.
-   *
-   * If no telemetry for 5 seconds,
-   * dashboard treats device as offline.
-   */
 
   const online =
     mqttConnected && deviceOnline && lastSeen > 0 && now - lastSeen < 5000;
 
   // =========================================================
-  // CHART DATA
+  // CHART SERIES
   // =========================================================
 
   const series = useMemo(
@@ -509,7 +475,7 @@ export default function Dashboard() {
   );
 
   // =========================================================
-  // SEND LED COMMAND
+  // SEND COMMAND
   // =========================================================
 
   function updateCommand(key, value) {
@@ -521,26 +487,14 @@ export default function Dashboard() {
       return;
     }
 
-    // -------------------------------------------------------
-    // New desired state
-    // -------------------------------------------------------
-
     const nextCommands = {
       ...commands,
 
       [key]: value,
     };
 
-    // -------------------------------------------------------
-    // Unique command ID
-    // -------------------------------------------------------
-
     const commandId =
       Date.now().toString() + "_" + Math.random().toString(16).slice(2, 8);
-
-    // -------------------------------------------------------
-    // MQTT command payload
-    // -------------------------------------------------------
 
     const message = {
       commandId,
@@ -554,15 +508,13 @@ export default function Dashboard() {
       sentAt: Date.now(),
     };
 
+    console.log("[MQTT COMMAND SEND]", message);
+
     setCommands(nextCommands);
 
     setWriting(key);
 
     setError("");
-
-    // -------------------------------------------------------
-    // Start latency timer
-    // -------------------------------------------------------
 
     pendingCommandsRef.current.set(commandId, {
       startedAt: performance.now(),
@@ -570,27 +522,12 @@ export default function Dashboard() {
       key,
     });
 
-    console.log("[MQTT COMMAND SEND]", message);
-
-    // -------------------------------------------------------
-    // Publish
-    // -------------------------------------------------------
-
     client.publish(
       MQTT_TOPICS.desired,
 
       JSON.stringify(message),
 
       {
-        /*
-         * QoS 1:
-         * At least once delivery.
-         *
-         * Retained:
-         * ESP32 reconnects and receives
-         * latest desired LED state.
-         */
-
         qos: 1,
 
         retain: true,
@@ -609,20 +546,11 @@ export default function Dashboard() {
           return;
         }
 
-        console.log("[MQTT] Command accepted by client");
-
-        /*
-         * Do NOT clear writing here.
-         *
-         * We wait until ESP32 ACK is received,
-         * so UI reflects actual hardware confirmation.
-         */
+        console.log("[MQTT] Command published");
       },
     );
 
-    // -------------------------------------------------------
-    // ACK timeout
-    // -------------------------------------------------------
+    // ACK timeout protection
 
     setTimeout(() => {
       const pending = pendingCommandsRef.current.get(commandId);
@@ -637,7 +565,7 @@ export default function Dashboard() {
 
       setError("ESP32 command ACK timeout");
 
-      console.warn("[MQTT] ACK timeout:", commandId);
+      console.warn("[MQTT] Command ACK timeout:", commandId);
     }, 5000);
   }
 
@@ -662,9 +590,7 @@ export default function Dashboard() {
           md:py-7
         "
       >
-        {/* ==================================================
-            HEADER
-        ================================================== */}
+        {/* HEADER */}
 
         <header
           className="
@@ -677,9 +603,7 @@ export default function Dashboard() {
             flex
             flex-col
             md:flex-row
-
             md:items-center
-
             justify-between
 
             gap-5
@@ -730,15 +654,11 @@ export default function Dashboard() {
                 <span
                   className="
                     rounded-full
-
                     border
                     border-emerald-300/10
-
                     bg-emerald-300/5
-
                     px-2
                     py-1
-
                     text-[10px]
                     text-emerald-200/60
                   "
@@ -770,12 +690,9 @@ export default function Dashboard() {
             <div
               className="
                 rounded-2xl
-
                 border
                 border-white/8
-
                 bg-white/[.035]
-
                 px-4
                 py-3
               "
@@ -804,15 +721,11 @@ export default function Dashboard() {
             <div
               className="
                 rounded-2xl
-
                 border
                 border-white/8
-
                 bg-white/[.035]
-
                 px-4
                 py-3
-
                 min-w-[150px]
               "
             >
@@ -829,11 +742,9 @@ export default function Dashboard() {
               <div
                 className="
                   mt-1
-
                   flex
                   items-center
                   gap-2
-
                   text-sm
                 "
               >
@@ -853,25 +764,18 @@ export default function Dashboard() {
           </div>
         </header>
 
-        {/* ==================================================
-            ERROR
-        ================================================== */}
+        {/* ERROR */}
 
         {error && (
           <div
             className="
                 mt-4
-
                 rounded-2xl
-
                 border
                 border-red-400/20
-
                 bg-red-400/8
-
                 px-4
                 py-3
-
                 text-sm
                 text-red-200
               "
@@ -880,18 +784,13 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* ==================================================
-            SENSOR CARDS
-        ================================================== */}
+        {/* SENSOR CARDS */}
 
         <section
           className="
             mt-5
-
             grid
-
             gap-4
-
             sm:grid-cols-2
             xl:grid-cols-4
           "
@@ -937,31 +836,22 @@ export default function Dashboard() {
           />
         </section>
 
-        {/* ==================================================
-            CONTROL + HEALTH
-        ================================================== */}
+        {/* CONTROL + HEALTH */}
 
         <section
           className="
             mt-4
-
             grid
-
             gap-4
-
             xl:grid-cols-[1.35fr_.65fr]
           "
         >
-          {/* =================================================
-              OUTPUT CONTROL
-          ================================================= */}
+          {/* CONTROL PANEL */}
 
           <div
             className="
               glass
-
               rounded-3xl
-
               p-5
               md:p-6
             "
@@ -1004,25 +894,19 @@ export default function Dashboard() {
             <div
               className="
                 mt-5
-
                 grid
-
                 gap-3
-
                 md:grid-cols-2
               "
             >
-              {/* LED 1 AUTO */}
+              {/* LED 1 */}
 
               <div
                 className="
                   rounded-2xl
-
                   border
                   border-emerald-300/10
-
                   bg-emerald-300/[.035]
-
                   p-4
 
                   flex
@@ -1061,7 +945,7 @@ export default function Dashboard() {
                 </span>
               </div>
 
-              {/* LED 2 / 3 / 4 */}
+              {/* LED 2 / LED 3 / LED 4 */}
 
               {[2, 3, 4].map((number) => {
                 const key = `led${number}`;
@@ -1071,12 +955,9 @@ export default function Dashboard() {
                     key={key}
                     className="
                           rounded-2xl
-
                           border
                           border-white/8
-
                           bg-white/[.025]
-
                           p-4
 
                           flex
@@ -1102,7 +983,7 @@ export default function Dashboard() {
                               text-white/35
                             "
                       >
-                        HW {telemetry[key] ? "ON" : "OFF"}
+                        Hardware: {telemetry[key] ? "ON" : "OFF"}
                       </p>
                     </div>
 
@@ -1117,16 +998,12 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* =================================================
-              SYSTEM HEALTH
-          ================================================= */}
+          {/* SYSTEM HEALTH */}
 
           <div
             className="
               glass
-
               rounded-3xl
-
               p-5
               md:p-6
             "
@@ -1179,14 +1056,10 @@ export default function Dashboard() {
             <div
               className="
                 mt-5
-
                 rounded-2xl
-
                 border
                 border-emerald-300/10
-
                 bg-emerald-300/[.035]
-
                 p-4
               "
             >
@@ -1216,7 +1089,6 @@ export default function Dashboard() {
                   <p
                     className="
                       mt-1
-
                       text-2xl
                       font-semibold
                     "
@@ -1230,9 +1102,7 @@ export default function Dashboard() {
             <div
               className="
                 mt-4
-
                 space-y-3
-
                 text-sm
               "
             >
@@ -1240,10 +1110,8 @@ export default function Dashboard() {
                 className="
                   flex
                   justify-between
-
                   border-b
                   border-white/6
-
                   pb-3
                 "
               >
@@ -1262,10 +1130,8 @@ export default function Dashboard() {
                 className="
                   flex
                   justify-between
-
                   border-b
                   border-white/6
-
                   pb-3
                 "
               >
@@ -1284,10 +1150,8 @@ export default function Dashboard() {
                 className="
                   flex
                   justify-between
-
                   border-b
                   border-white/6
-
                   pb-3
                 "
               >
@@ -1306,10 +1170,8 @@ export default function Dashboard() {
                 className="
                   flex
                   justify-between
-
                   border-b
                   border-white/6
-
                   pb-3
                 "
               >
@@ -1328,10 +1190,8 @@ export default function Dashboard() {
                 className="
                   flex
                   justify-between
-
                   border-b
                   border-white/6
-
                   pb-3
                 "
               >
@@ -1362,7 +1222,7 @@ export default function Dashboard() {
 
                 <span
                   className="
-                    max-w-[150px]
+                    max-w-[140px]
                     truncate
                   "
                 >
@@ -1373,18 +1233,13 @@ export default function Dashboard() {
           </div>
         </section>
 
-        {/* ==================================================
-            TELEMETRY TABLE
-        ================================================== */}
+        {/* TELEMETRY */}
 
         <section
           className="
             mt-4
-
             glass
-
             rounded-3xl
-
             p-5
           "
         >
@@ -1522,18 +1377,13 @@ export default function Dashboard() {
           </div>
         </section>
 
-        {/* ==================================================
-            MQTT TOPICS
-        ================================================== */}
+        {/* MQTT TOPICS */}
 
         <section
           className="
             mt-4
-
             glass
-
             rounded-3xl
-
             p-5
           "
         >
@@ -1549,22 +1399,16 @@ export default function Dashboard() {
           <div
             className="
               mt-3
-
               grid
-
               gap-2
-
               md:grid-cols-2
             "
           >
             <code
               className="
                 rounded-xl
-
                 bg-black/20
-
                 p-3
-
                 text-xs
                 text-emerald-200
               "
@@ -1575,11 +1419,8 @@ export default function Dashboard() {
             <code
               className="
                 rounded-xl
-
                 bg-black/20
-
                 p-3
-
                 text-xs
                 text-emerald-200
               "
@@ -1590,11 +1431,8 @@ export default function Dashboard() {
             <code
               className="
                 rounded-xl
-
                 bg-black/20
-
                 p-3
-
                 text-xs
                 text-emerald-200
               "
@@ -1605,11 +1443,8 @@ export default function Dashboard() {
             <code
               className="
                 rounded-xl
-
                 bg-black/20
-
                 p-3
-
                 text-xs
                 text-emerald-200
               "
