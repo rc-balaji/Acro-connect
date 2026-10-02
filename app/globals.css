@@ -14,7 +14,7 @@
 }
 
 * { box-sizing: border-box; }
-html { background: var(--background); }
+html { background: var(--background); color-scheme: dark; }
 body {
   margin: 0;
   color: var(--foreground);
@@ -26,8 +26,15 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
+input, select {
+  color: var(--foreground);
+  background: rgba(255,255,255,.035);
+  border: 1px solid rgba(255,255,255,.09);
+  outline: none;
+}
+input:focus, select:focus { border-color: rgba(99,230,140,.55); box-shadow: 0 0 0 3px rgba(99,230,140,.07); }
 
 .glass {
   background: linear-gradient(180deg, rgba(16, 37, 27, .92), rgba(9, 24, 17, .90));
@@ -49,3 +56,7 @@ button { -webkit-tap-highlight-color: transparent; }
   70% { box-shadow: 0 0 0 10px rgba(99, 230, 140, 0); }
   100% { box-shadow: 0 0 0 0 rgba(99, 230, 140, 0); }
 }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: rgba(255,255,255,.02); }
+::-webkit-scrollbar-thumb { background: rgba(99,230,140,.16); border-radius: 999px; }

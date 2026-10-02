@@ -1,189 +1,98 @@
-# AGRO CONNECT — Firebase + Next.js Dashboard
+# AGRO CONNECT — Next.js + Firebase + MQTT + Plan
 
-Deploy-ready realtime smart-farming dashboard for one ESP32/Wokwi prototype.
+Complete web/server build for the AGRO CONNECT prototype.
 
 ## Architecture
 
-ESP32/Wokwi -> HTTPS POST -> Vercel `/api/webhook` -> Firebase Realtime Database -> Dashboard realtime listener
+- ESP32 / MicroPython -> MQTT broker (`broker.emqx.io`)
+- Web dashboard -> MQTT WebSocket for realtime telemetry/manual motor controls
+- **Plan** page -> Next.js API -> Firebase Realtime Database
+- Vercel Cron -> `/api/cron/schedules` -> MQTT -> Motor 1/2/3
+- Soil moisture automatic relay remains fully independent and is not scheduled.
 
-Dashboard -> Firebase command values -> ESP32 receives commands from `/api/webhook` response or `/api/commands`
+## Motor mapping
 
-There is intentionally **no login, no API key, no device secret, and no protected database rule** in this prototype build.
+- Motor 1 -> `led2` -> D14 Green indicator
+- Motor 2 -> `led3` -> D23 Orange indicator
+- Motor 3 -> `led4` -> D22 Red indicator
+- Automatic soil relay -> D25 (not controlled by Plan)
 
-## 1. Create Realtime Database
+## Plan behavior
 
-Firebase Console -> Build -> Realtime Database -> Create Database.
+A plan stores:
+- motor 1/2/3
+- start date
+- start time (IST / Asia-Kolkata)
+- duration in minutes
+- one date only / daily / selected weekdays
+- optional end date
+- enabled / disabled
 
-Choose a database location and create it.
+At the start time, the selected motor turns ON. At `start + duration`, it turns OFF.
 
-Copy the exact database URL shown at the top of the Realtime Database Data screen.
+## Firebase paths
 
-Open:
-
-`lib/firebase-config.js`
-
-Check this line:
-
-```js
-databaseURL: "https://agro-connect-29b39-default-rtdb.firebaseio.com"
+```text
+devices/AGRO-001/
+  schedules/<planId>/...
+  scheduleExecutions/<executionId>/...
+  commands/led2|led3|led4
 ```
 
-If Firebase shows a different URL, replace that line with the exact URL from the console.
+The execution ID is deterministic per plan occurrence and phase. Firebase ETag claims are used so duplicate cron invocations do not normally fire the same occurrence twice.
 
-## 2. Open the database rules
+## Conflict checking
 
-Firebase Console -> Realtime Database -> Rules
+When creating or editing an enabled plan, the server checks the next 90 days for overlapping plans on the same motor. A conflict returns HTTP 409.
 
-Paste:
-
-```json
-{
-  "rules": {
-    ".read": true,
-    ".write": true
-  }
-}
-```
-
-Click **Publish**.
-
-These rules make the entire database publicly readable/writable. This is intentional for this demo/prototype. Do not use these rules for a public production system.
-
-## 3. Optional initial data
-
-You do not need to manually create database records. The webhook and dashboard will create them.
-
-If you want initial values, the file is:
-
-`firebase/sample-data.json`
-
-## 4. Run locally
+## Deploy
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open:
+Push the whole folder to GitHub and deploy it on Vercel.
 
-`http://localhost:3000`
-
-## 5. Push to GitHub
-
-```bash
-git init
-git add .
-git commit -m "AGRO CONNECT dashboard"
-git branch -M main
-git remote add origin YOUR_GITHUB_REPO_URL
-git push -u origin main
-```
-
-## 6. Deploy on Vercel
-
-- Log into Vercel
-- Add New -> Project
-- Import the GitHub repository
-- Framework should detect **Next.js** automatically
-- No environment variables are required
-- Deploy
-
-After deployment, test:
-
-`https://YOUR-VERCEL-URL.vercel.app/api/health`
-
-You should receive JSON with `ok: true`.
-
-## 7. Test webhook manually
-
-Send POST to:
-
-`https://YOUR-VERCEL-URL.vercel.app/api/webhook`
-
-JSON body:
+`vercel.json` requests a once-per-minute cron:
 
 ```json
 {
-  "temperature": 28.4,
-  "humidity": 65,
-  "soil": 42,
-  "waterLevel": 76,
-  "led1": false,
-  "led2": false,
-  "led3": false,
-  "led4": false
+  "crons": [{ "path": "/api/cron/schedules", "schedule": "* * * * *" }]
 }
 ```
 
-The response also returns the latest dashboard commands:
+The scheduler uses a 5-minute catch-up window. Exact scheduler frequency depends on what your Vercel plan permits. If Vercel rejects a 1-minute cron, use a Vercel tier that permits it or call `/api/cron/schedules` every minute from a scheduler service.
 
-```json
-{
-  "ok": true,
-  "deviceId": "AGRO-001",
-  "commands": {
-    "led2": false,
-    "led3": true,
-    "led4": false
-  }
-}
-```
+### Optional cron protection
 
-This means the same ESP32 request can upload sensor data and receive LED commands.
-
-## 8. ESP32 integration endpoints
-
-### Send telemetry and receive commands
-
-`POST https://YOUR-VERCEL-URL.vercel.app/api/webhook`
-
-### Read commands only
-
-`GET https://YOUR-VERCEL-URL.vercel.app/api/commands`
-
-### Health check
-
-`GET https://YOUR-VERCEL-URL.vercel.app/api/health`
-
-## Data structure
+Set a Vercel environment variable:
 
 ```text
-devices/
-  AGRO-001/
-    telemetry/
-      temperature
-      humidity
-      soil
-      waterLevel
-      led1
-      led2
-      led3
-      led4
-      updatedAt
-
-    commands/
-      led2
-      led3
-      led4
-
-    status/
-      online
-      lastSeen
-
-    history/
-      <timestamp>/...
+CRON_SECRET=some-random-value
 ```
 
-LED1 is intentionally read-only in the web dashboard. It is controlled by the ESP32 soil-moisture automation.
+When configured, `/api/cron/schedules` accepts only `Authorization: Bearer <CRON_SECRET>`.
 
-LED2, LED3, and LED4 are remotely controlled from the dashboard.
+## Firebase
 
-## Next step
+This repo uses the existing Realtime Database:
 
-After Vercel deployment, send the deployed base URL. The existing Wokwi MicroPython code can then be updated to:
+`agro-connect-29b39-default-rtdb.asia-southeast1.firebasedatabase.app`
 
-1. connect to Wi-Fi,
-2. POST temperature/humidity/soil/water/LED state to `/api/webhook`,
-3. read the returned LED2/3/4 commands,
-4. apply those commands to the ESP32 GPIO outputs,
-5. continue showing DHT, soil and water values on the LCD.
+For this prototype the existing public Firebase rules can continue to work. Do not use open rules for a production deployment.
+
+## Endpoints
+
+- `GET /api/health`
+- `GET /api/schedules`
+- `POST /api/schedules`
+- `PATCH /api/schedules/:id`
+- `DELETE /api/schedules/:id`
+- `GET /api/cron/schedules`
+- `GET /api/commands`
+- `POST /api/webhook`
+
+## ESP32 requirement
+
+The current MicroPython callback must accept partial or full `led2/led3/led4` command fields and publish an ACK to the state topic using `ackCommandId`. The current AGRO CONNECT code already follows that model.

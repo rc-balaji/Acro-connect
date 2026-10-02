@@ -1,13 +1,15 @@
-import { DATABASE_URL, DEVICE_ID } from "@/lib/firebase-config";
+import { IST_TIMEZONE, dateKeyInIST, timeKeyInIST } from "@/lib/schedule-utils";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const now = new Date();
   return Response.json({
     ok: true,
     service: "AGRO CONNECT",
-    deviceId: DEVICE_ID,
-    databaseURL: DATABASE_URL,
-    timestamp: Date.now()
+    timezone: IST_TIMEZONE,
+    istDate: dateKeyInIST(now),
+    istTime: timeKeyInIST(now),
+    timestamp: Date.now(),
   });
 }
