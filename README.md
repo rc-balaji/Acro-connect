@@ -1,98 +1,211 @@
-# AGRO CONNECT — Next.js + Firebase + MQTT + Plan
+# AGRO CONNECT - Next.js + Firebase + MQTT + Server-side Plan Scheduler
 
-Complete web/server build for the AGRO CONNECT prototype.
+This ZIP is the complete web/server build for the current AGRO CONNECT prototype.
 
-## Architecture
+It keeps the existing realtime dashboard and adds a **Plan** tab for server-side Motor 1/2/3 schedules with date, `HH:MM:SS`, duration in seconds, one-time/daily/selected-day repeats, edit, duplicate, enable/disable, delete, overlap checking, quick testing, and automatic START/STOP execution.
 
-- ESP32 / MicroPython -> MQTT broker (`broker.emqx.io`)
-- Web dashboard -> MQTT WebSocket for realtime telemetry/manual motor controls
-- **Plan** page -> Next.js API -> Firebase Realtime Database
-- Vercel Cron -> `/api/cron/schedules` -> MQTT -> Motor 1/2/3
-- Soil moisture automatic relay remains fully independent and is not scheduled.
+## Final architecture
+
+```text
+Manual control
+Web / Flutter -> MQTT desired -> ESP32 -> Motor LED 1/2/3
+
+Plan control
+Web / Flutter -> Next.js API -> Firebase RTDB
+                            -> Cloudflare Durable Object Alarm
+                            -> exact START/STOP callback to Next.js
+                            -> MQTT desired -> ESP32 -> Motor LED 1/2/3
+
+Soil automation
+Soil D34 -> ESP32 local logic -> Relay D25
+```
+
+**Plan never controls Relay D25.** The soil-moisture relay automation remains independent on the ESP32.
 
 ## Motor mapping
 
-- Motor 1 -> `led2` -> D14 Green indicator
-- Motor 2 -> `led3` -> D23 Orange indicator
-- Motor 3 -> `led4` -> D22 Red indicator
-- Automatic soil relay -> D25 (not controlled by Plan)
-
-## Plan behavior
-
-A plan stores:
-- motor 1/2/3
-- start date
-- start time (IST / Asia-Kolkata)
-- duration in minutes
-- one date only / daily / selected weekdays
-- optional end date
-- enabled / disabled
-
-At the start time, the selected motor turns ON. At `start + duration`, it turns OFF.
-
-## Firebase paths
-
 ```text
-devices/AGRO-001/
-  schedules/<planId>/...
-  scheduleExecutions/<executionId>/...
-  commands/led2|led3|led4
+Motor 1 -> MQTT led2 -> D14 Green
+Motor 2 -> MQTT led3 -> D23 Orange
+Motor 3 -> MQTT led4 -> D22 Red
 ```
 
-The execution ID is deterministic per plan occurrence and phase. Firebase ETag claims are used so duplicate cron invocations do not normally fire the same occurrence twice.
+## Database
 
-## Conflict checking
+Firebase Realtime Database is still the only application database.
 
-When creating or editing an enabled plan, the server checks the next 90 days for overlapping plans on the same motor. A conflict returns HTTP 409.
+```text
+devices/
+  AGRO-001/
+    commands/
+      led2
+      led3
+      led4
 
-## Deploy
+    schedules/
+      plan_xxx/
+        title
+        motor
+        date
+        time              # HH:MM:SS
+        durationSec
+        repeat            # once | daily | weekly
+        weekdays          # 0..6 for selected-day repeat
+        endDate
+        enabled
+        timezone          # Asia/Kolkata
+        schedulerStatus
+        lastTriggeredAt
+        lastResult
+        lastPhase
+
+    scheduleExecutions/
+      <schedule_occurrence_phase>/
+        motor
+        phase             # start | stop
+        scheduledFor
+        status
+        commandId
+        acknowledged
+        latencyMs
+```
+
+The Cloudflare Durable Object has tiny internal alarm state only. It is an execution timer, not a replacement app database.
+
+## Plan UX
+
+Open **Plan** from the top navigation.
+
+- `Create new` first asks which motor you want to schedule.
+- Selecting Motor 1/2/3 filters the Google-Calendar-style month view to that motor.
+- Clicking a calendar day opens the editor with that date preselected.
+- Start time accepts seconds (`HH:MM:SS`).
+- Duration is stored in seconds; quick values include 10s, 30s, 1m, 5m and 15m.
+- Repeat: this date only, every day, or selected weekdays.
+- Optional end date for recurring plans.
+- Edit, duplicate, enable/disable and delete are included.
+- Same-motor overlaps are rejected before saving.
+- `Quick test` creates a one-time plan about 20 seconds in the future and runs the selected motor for 5 seconds.
+
+## Accuracy model
+
+There is no polling cron and no ESP32 schedule/NTP code.
+
+The schedule engine uses Cloudflare Durable Object alarms with an epoch-millisecond alarm timestamp. The alarm calls the Next.js API at START, then arms another alarm for `durationSec` later and calls the API again for STOP.
+
+This is appropriate for this prototype and is much more precise than a once-per-minute free cron. It is still cloud infrastructure, so it is not a hard real-time/industrial safety controller.
+
+## 1. Run Next.js locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-Push the whole folder to GitHub and deploy it on Vercel.
-
-`vercel.json` requests a once-per-minute cron:
-
-```json
-{
-  "crons": [{ "path": "/api/cron/schedules", "schedule": "* * * * *" }]
-}
-```
-
-The scheduler uses a 5-minute catch-up window. Exact scheduler frequency depends on what your Vercel plan permits. If Vercel rejects a 1-minute cron, use a Vercel tier that permits it or call `/api/cron/schedules` every minute from a scheduler service.
-
-### Optional cron protection
-
-Set a Vercel environment variable:
+Open:
 
 ```text
-CRON_SECRET=some-random-value
+http://localhost:3000
+http://localhost:3000/plan
 ```
 
-When configured, `/api/cron/schedules` accepts only `Authorization: Bearer <CRON_SECRET>`.
+Without the Cloudflare environment variables, the dashboard works but creating an enabled Plan will report that the scheduler has not been configured.
 
-## Firebase
+## 2. Push the Next.js project to GitHub / Vercel
 
-This repo uses the existing Realtime Database:
+This folder can replace the current repository root.
 
-`agro-connect-29b39-default-rtdb.asia-southeast1.firebasedatabase.app`
+```bash
+git add .
+git commit -m "Add server-side motor Plan scheduler"
+git push
+```
 
-For this prototype the existing public Firebase rules can continue to work. Do not use open rules for a production deployment.
+Vercel should detect Next.js automatically.
 
-## Endpoints
+There is **no Vercel Cron** in this project.
 
-- `GET /api/health`
-- `GET /api/schedules`
-- `POST /api/schedules`
-- `PATCH /api/schedules/:id`
-- `DELETE /api/schedules/:id`
-- `GET /api/cron/schedules`
-- `GET /api/commands`
-- `POST /api/webhook`
+## 3. Deploy the free schedule engine
 
-## ESP32 requirement
+The included folder is:
 
-The current MicroPython callback must accept partial or full `led2/led3/led4` command fields and publish an ACK to the state topic using `ackCommandId`. The current AGRO CONNECT code already follows that model.
+```text
+cloudflare-scheduler/
+```
+
+Follow `cloudflare-scheduler/README.md`.
+
+In short:
+
+```bash
+cd cloudflare-scheduler
+npm install
+npx wrangler login
+npx wrangler secret put SCHEDULER_SHARED_SECRET
+npm run deploy
+```
+
+If your Vercel production domain differs from `https://acro-connect.vercel.app`, edit `cloudflare-scheduler/wrangler.jsonc` first.
+
+## 4. Add Vercel environment variables
+
+After Cloudflare deploys, copy the Worker URL and set these in Vercel:
+
+```text
+SCHEDULER_BASE_URL=https://agro-connect-scheduler.<your-subdomain>.workers.dev
+SCHEDULER_SHARED_SECRET=<same secret used in Cloudflare>
+```
+
+Redeploy Vercel.
+
+Do not commit the real secret. `.env.example` contains placeholders only.
+
+## 5. Verify
+
+Health checks:
+
+```text
+GET /api/health
+GET /api/scheduler/status
+```
+
+In the browser:
+
+1. Open `Plan`.
+2. Confirm the badge shows `Scheduler ready`.
+3. Select Motor 1, 2 or 3.
+4. Press `Quick test`.
+5. Wait around 20 seconds.
+6. The selected motor indicator should turn ON.
+7. Five seconds later it should turn OFF.
+8. Firebase `scheduleExecutions` records START and STOP results/ACK information.
+
+## MQTT behavior
+
+The schedule server uses the same MQTT contract as the manual dashboard:
+
+```text
+Broker: broker.emqx.io
+WebSocket: wss://broker.emqx.io:8084/mqtt
+Device: AGRO-001
+Desired: agroconnect/AGRO-001/desired
+State/ACK: agroconnect/AGRO-001/state
+```
+
+Before changing one scheduled motor, the server listens for retained `desired` and `state` packets so it preserves the other two motor states. It changes only the target motor and publishes the complete `led2/led3/led4` desired state.
+
+## Reliability details included
+
+- Firebase overlap checking for the same motor.
+- Cloudflare alarm is one future wake-up per schedule; no minute polling.
+- START and STOP are separate idempotent occurrences.
+- Firebase ETag claim prevents an at-least-once alarm retry from executing the same occurrence twice after completion.
+- MQTT command uses a unique command ID and waits for the ESP32 `ackCommandId`.
+- Execution result is logged in Firebase.
+- Schedule edit/disable/delete re-arms or cancels the Durable Object alarm.
+- If a plan is edited/disabled/deleted while its scheduled motor is in the ON window, the scheduler sends a cleanup OFF command first.
+- Manual and scheduled commands use the same MQTT `desired` topic and state model.
+
+## Prototype note
+
+The current Firebase configuration and public EMQX broker are appropriate for your exhibition/prototype setup. Before a real farm deployment, use authenticated/private MQTT and restricted Firebase rules.

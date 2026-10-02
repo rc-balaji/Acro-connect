@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "agro-connect-scheduler",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-02",
+  "vars": {
+    "NEXT_API_BASE_URL": "https://acro-connect.vercel.app"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SCHEDULES",
+        "class_name": "ScheduleAlarm"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ScheduleAlarm"]
+    }
+  ]
+}
